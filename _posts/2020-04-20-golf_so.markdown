@@ -51,7 +51,7 @@ I'm quite happy about how this challenge turned out for us, because even if we
 didn't finished first on the global leaderboard, at least we finished first on
 a leaderboard :)
 
-![](assets/img/2020-04-19_18:50:46.png)
+![]({{ site.url }}/assets/img/2020-04-19_18:50:46.png)
 
 # The challenge
 
@@ -370,7 +370,7 @@ We tried to remove the `argv` setup for `execve`, as it is set to the `argv`
 used to run the program, and it should be ignored by linux and the shell, but
 the challenge checks it.
 
-![](assets/img/2020-04-18_043804.png)
+![]({{ site.url }}/assets/img/2020-04-18_043804.png)
 
 Anyways, this solution should make a binary a bit over 300 bytes, but I'm sure
 we would be able to optimized it later.
@@ -541,7 +541,7 @@ sh-5.0$
 
 Uploading it to the server gives us this result:
 
-![](assets/img/2020-04-19_23:58:37.png)
+![]({{ site.url }}/assets/img/2020-04-19_23:58:37.png)
 
 Yes! We have the first flag! But now it is time to get serious.
 
@@ -673,7 +673,7 @@ sh-5.0$
 
 And now on the site:
 
-![](assets/img/2020-04-19_23:16:33.png)
+![]({{ site.url }}/assets/img/2020-04-19_23:16:33.png)
 
 :)
 
