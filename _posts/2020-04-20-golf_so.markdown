@@ -1,0 +1,698 @@
+---
+layout: post
+title: "golf.so (Plaid CTF 2020) - The race to the smallest .so"
+date: 2020-04-20 00:45:05 +0100
+---
+
+# Challenge
+
+```
+golf.so - Misc (500 pts)
+
+Story:
+
+Thinking that Bovik’s flags might be hidden in plain sight, you find on your
+minimap of the Inner Sanctum that there’s a golf course tucked into the
+northeast corner. Before other people catch on to the idea, you sneak off
+towards the rolling grassy hills of the golf course.
+
+As you walk up to the entrance, a small man with pointy ears pops up out of the
+ground.
+
+“Would you like to play? Right now almost nobody is here, so it’ll only be a
+thousand checkers to play a round.“
+
+You wave your hand and send the man the required amount. It’s not a lot of
+money, but your balance dwindles to a paltry sum.
+
+“Thanks! Enjoy your game.“
+
+A golf club appears in your hand along with a ball that looks suspiciously too
+large. The start of the first hole beckons, and you stride over to tee off.
+
+Problem Details
+
+golf.so.pwni.ng
+
+putter (250 pts)
+driver (250 pts)
+```
+
+# Foreword
+
+You can skip to section [136 bytes - back to binutils] if you want the solution;
+otherwise you will see the step by step progress leading to this solution.
+
+I want to thank my teammates of team [LSE](https://lse.epita.fr), who helped me
+a lot for this challenge, and in particular
+[bitz](https://github.com/zionlion67) and [zuh0](https://github.com/zuh0).
+
+I'm quite happy about how this challenge turned out for us, because even if we
+didn't finished first on the global leaderboard, at least we finished first on
+a leaderboard :)
+
+![](assets/img/2020-04-19_18:50:46.png)
+
+# The challenge
+
+The challenge consists in a website on which we can upload a .so for `x86_64`.
+
+The description on the page is as such:
+
+```
+Upload a 64-bit ELF shared object of size at most 1024 bytes. It should spawn a shell (execute execve("/bin/sh", ["/bin/sh"], ...)) when used like
+
+LD_PRELOAD=<upload> /bin/true
+```
+
+# The plan
+
+So right ahead I think about how we can operate:
+
+ - Start by writing a small asm stub that `execve("/bin/sh")`
+ - Put the entry point of this stub in the ELF's constructor
+ - Try to trim the ld script for .so
+ - Then try to fiddle with `strip` and `objcopy` to remove clutter
+
+If those step don't make an ELF smaller that 1024 bytes, we would be left with
+no other choice than edit/create the ELF by hand.
+
+## Tricking binutils and gcc
+
+First let's write a simple asm file that does `execve("/bin/sh", ["/bin/sh"])`:
+
+```
+#include <sys/syscall.h>
+f:
+mov $0x68732f6e69622f, %rax // "/bin/sh" string
+push %rax
+mov %rsp, %rdi
+push $0
+push %rdi
+push $0
+lea 8(%rsp), %rsi
+xor %rdx, %rdx
+mov $__NR_execve, %rax
+syscall
+        .size   f, .-f
+        .section        .init_array,"aw"
+        .quad   f
+
+```
+
+And a little makefile to help us:
+
+```
+libgolf.so: ASFLAGS += -fpic
+libgolf.so: golf.o
+
+%.so:
+        $(LINK.c) -shared $^ $(LDLIBS) -o $@
+```
+
+And for fun let's look at the size of the library generated:
+
+```
+$ make
+cc -fpic   -c -o golf.o golf.S
+cc -fpic    -shared golf.o  -o libgolf.so
+$ stat -c "%s %n" libgolf.so
+15408 libgolf.so
+```
+
+Ok, so we have to reduce the file size more that 15 time; let's dive in.
+
+We made the assumption that most of the "garbage" will come from our link.
+This assumption is justified by the difference of size between our .o and our
+.so. So we took the linker script bundled with our binutils (`elf_x86_64.xs`)
+distribution and striped it of everything I didn't understand/need.
+
+I ended with a linker script as such:
+
+```
+/* Script for -shared */
+/* Copyright (C) 2014-2020 Free Software Foundation, Inc.
+   Copying and distribution of this script, with or without modification,
+   are permitted in any medium without royalty provided the copyright
+   notice and this notice are preserved.  */
+OUTPUT_FORMAT("elf64-x86-64", "elf64-x86-64",
+              "elf64-x86-64")
+OUTPUT_ARCH(i386:x86-64)
+SECTIONS
+{
+  /* Read-only sections, merged into text segment: */
+  . = SEGMENT_START("text-segment", 0) + SIZEOF_HEADERS;
+  .init_array    :
+  {
+    KEEP (*(SORT_BY_INIT_PRIORITY(.init_array.*)))
+    KEEP (*(.init_array EXCLUDE_FILE (*crtbegin.o *crtbegin?.o *crtend.o
+*crtend?.o ) .ctors))
+  }
+}
+
+```
+
+Trying it:
+
+```
+$ stat -c "%s %n" golf.o # Let's look at the size of our source object
+928
+$ make -B LDFLAGS=-Wl,-Tlds.lds
+cc -fpic   -c -o golf.o golf.S
+cc -fpic  -Wl,-Tlds.lds  -shared golf.o  -o libgolf.so
+$ stat -c "%s %n" libgolf.so
+4688 libgolf.so
+```
+
+We also used some other flags to reduce the file size:
+ - `-Wl,--build-id=none`
+ - `-nostdlib`
+
+```
+$ make  -B LDFLAGS='-Wl,-Tlds.lds -nostdlib -Wl,--build-id=none'
+1672 libgolf.so
+```
+
+Also `strip`ed our binary and removed useless sections with `objcopy`:
+
+```
+$ strip libgolf.so
+$ stat -c "%s" libgolf.so
+1224
+$
+$ # Those sections are removed as removing them don't make the .so to crash
+$ for i in .gnu.hash .init_array .dynstr .dynsym; do
+> objcopy --remove-section $i libgolf.so
+> stat -c "%s" libgolf.so
+> done
+1144 .gnu.hash
+1064 .init_array
+992 .dynstr
+920 .dynsym
+```
+
+Nice, challenge finished, isn't it ? Let's upload the file...
+
+```
+You made it to level 0: non-trivial! You have 420 bytes left to be considerable.
+This effort is worthy of 0/2 flags.
+```
+
+Damn! We have to be under 500 bytes now ?
+
+It's becoming harder and harder to tweak our tools to make the smallest
+binary, we may have to craft our library by hand. However there is still one
+easy way to reduce the ELF's size: we can trim the end of the binary and pray
+that it still loads.
+
+```
+$ dd if=libgolf.so of=l.so bs=1 count=500
+$ LD_PRELOAD=./l.so /bin/true
+sh-5.0$
+```
+
+Thankfully, it still loads, so we've made it to the next level. Will our efforts
+be rewarded by a flag ?
+
+```
+You made it to level 1: considerable! You have 200 bytes left to be thoughtful.
+This effort is worthy of 0/2 flags.
+```
+
+Sadly, this `dd` trick doesn't work for a size of 300 bytes (on my machine it
+stops loading if we keep less that 460 bytes). We will need to craft our own
+binary.
+
+# Elf crafting
+
+Let's look at what we our library before playing with `dd` in last section:
+
+```
+$ readelf -a libgolf.so
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00 
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              DYN (Shared object file)
+  Machine:                           Advanced Micro Devices X86-64
+  Version:                           0x1
+  Entry point address:               0xb0
+  Start of program headers:          64 (bytes into file)
+  Start of section headers:          600 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               64 (bytes)
+  Size of program headers:           56 (bytes)
+  Number of program headers:         2
+  Size of section headers:           64 (bytes)
+  Number of section headers:         5
+  Section header string table index: 4
+
+Section Headers:
+  [Nr] Name              Type             Address           Offset
+       Size              EntSize          Flags  Link  Info  Align
+  [ 0]                   NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [ 1] .text             PROGBITS         00000000000000b0  000000b0
+       0000000000000024  0000000000000000  AX       0     0     1
+  [ 2] .rela.dyn         RELA             0000000000000118  00000118
+       0000000000000018  0000000000000018   A       0     0     8
+  [ 3] .dynamic          DYNAMIC          0000000000000130  00000130
+       0000000000000100  0000000000000010  WA       0     0     8
+  [ 4] .shstrtab         STRTAB           0000000000000000  00000230
+       0000000000000024  0000000000000000           0     0     1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  l (large), p (processor specific)
+
+There are no section groups in this file.
+
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000230 0x0000000000000230  RWE    0x1000
+  DYNAMIC        0x0000000000000130 0x0000000000000130 0x0000000000000130
+                 0x0000000000000100 0x0000000000000100  RW     0x8
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     .text .rela.dyn .dynamic
+   01     .dynamic
+
+Dynamic section at offset 0x130 contains 12 entries:
+  Tag        Type                         Name/Value
+ 0x0000000000000019 (INIT_ARRAY)         0x230
+ 0x000000000000001b (INIT_ARRAYSZ)       8 (bytes)
+ 0x000000006ffffef5 (GNU_HASH)           0xf8
+ 0x0000000000000005 (STRTAB)             0xf0
+ 0x0000000000000006 (SYMTAB)             0xd8
+ 0x000000000000000a (STRSZ)              1 (bytes)
+ 0x000000000000000b (SYMENT)             24 (bytes)
+ 0x0000000000000007 (RELA)               0x118
+ 0x0000000000000008 (RELASZ)             24 (bytes)
+ 0x0000000000000009 (RELAENT)            24 (bytes)
+ 0x000000006ffffff9 (RELACOUNT)          1
+ 0x0000000000000000 (NULL)               0x0
+
+Relocation section '.rela.dyn' at offset 0x118 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000000230  000000000008 R_X86_64_RELATIVE                    b0
+
+The decoding of unwind sections for machine type Advanced Micro Devices X86-64
+is not currently supported.
+
+No version information found in this file.
+```
+
+Now we need to know what we are going to keep.
+
+Obviously, we need to keep our payload.
+
+We know that we can get rid of the section headers, they are useless in our use
+case.
+
+We need those 2 program headers.
+
+We can improve here and there in the Dynamic section:
+
+ - Use a `DT_INIT` entry instead of `DT_INIT_ARRAY` and `DT_INIT_ARRAYSZ` +
+   function pointer array
+ - `DT_GNU_HASH`, `DT_STRTAB`, `DT_SYMTAB`, `DT_STRSZ` and `DT_SYMENT` seem
+   useless, we probably can get rid of them
+ - We thought that we needed a reloc for the `DT_INIT` function pointer, in
+   order to point to the beginning of our payload once relocated, so we kept
+   `DT_RELA`, `DT_RELASZ`and `DT_RELAENT`
+
+We thought that we needed a relocation (which was a wrong assumption, as we will
+see later).
+
+I started writing a program that took our current ELF and rewrote it only
+keeping the parts we needed, but in the end I changed this code to write an ELF
+from scratch, as it was simpler.
+
+The expected size of the binary with this is as follow:
+
+```
+1 Ehdr: 64
+2 Phdr: 2 * 56 = 112
+5 Dyn: 5 * 16 = 80
+1 Rela: 24
+= 280 + sizeof(payload)
+```
+
+Also, let's change our payload to something more compact:
+
+```
+#include <sys/syscall.h>
+
+.global payload
+payload:
+pushq  $__NR_execve
+pop    %rax
+movabs $0x68732f6e69622f,%rbx
+cltd
+push   %rbx
+push   %rsp
+pop    %rdi
+push   %rdx
+push   %rdi
+push   %rsp
+pop    %rsi
+syscall
+```
+
+We tried to remove the `argv` setup for `execve`, as it is set to the `argv`
+used to run the program, and it should be ignored by linux and the shell, but
+the challenge checks it.
+
+![](assets/img/2020-04-18_043804.png)
+
+Anyways, this solution should make a binary a bit over 300 bytes, but I'm sure
+we would be able to optimized it later.
+
+So we tried to write the code and we hit some road blocks:
+
+ - `ld.so` segfaults in `_dl_relocate_object` because it wants a `DT_STRTAB`
+ - then it fails because it needs a `DT_SYMTAB`
+
+Those were quickly found and fixed once we built a `ld.so` with debug symbols
+(after spending *way* too much time trying to reverse `ld.so`).
+
+So we fixed them, but our binary was still segfaulting... But looking at the
+coredump, the segfault happens on the jump to our code. In the glibc, we were
+here in `call_init`:
+
+```
+    DL_CALL_DT_INIT(l, l->l_addr + l->l_info[DT_INIT]->d_un.d_ptr, argc, argv, env);
+```
+
+See the `l->l_addr + l->l_info[DT_INIT]->d_un.d_ptr` ? It is adding the address
+of the library to `l->l_info[DT_INIT]->d_un.d_ptr`, which has a relocation to
+point to the beginning of our code.
+
+In other words, `l->l_info[DT_INIT]->d_un.d_ptr = code_offset + l->l_addr`, so
+we jump to `2 * l->l_addr + code_offset`, which is bogus, instead of `l->l_addr
++ code_offset`. Moving the relocation away of the `DT_INIT` makes our binary
+work.
+
+This revelation changes lots of things: We don't need relocations, so we can
+drop most of our Dynamic entries. We can make a file under 300 bytes, as we now
+only need `DT_INIT` and `DT_NULL`
+
+```
+1 Ehdr: 64
+2 Phdr: 2 * 56 = 112
+4 Dyn: 4 * 16 = 64
+= 240 + sizeof(pyaload)
+```
+
+The code:
+
+```C
+#include <elf.h>
+#include <unistd.h>
+
+char shellcode[] = {
+	0x6a, 0x3b, // pushq  $0x3b
+	0x58,       // pop    %rax
+	0x48, 0xbb, 0x2f, 0x62, 0x69, 0x6e, 0x2f,
+	0x73, 0x68, 0x00, // movabs $0x68732f6e69622f,%rbx
+	0x99, // cltd
+	0x53, // push   %rbx
+	0x54, // push   %rsp
+	0x5f, // pop    %rdi
+	0x52, // push   %rdx
+	0x57, // push   %rdi
+	0x54, // push   %rsp
+	0x5e, // pop    %rsi
+	0x0f, 0x05, // syscall
+};
+
+int main() {
+	Elf64_Ehdr ehdr = {
+		.e_ident = {
+			[EI_MAG0] = ELFMAG0,
+			[EI_MAG1] = ELFMAG1,
+			[EI_MAG2] = ELFMAG2,
+			[EI_MAG3] = ELFMAG3,
+			[EI_CLASS] = ELFCLASS64,
+			[EI_DATA] = ELFDATA2LSB,
+			[EI_VERSION] = EV_CURRENT,
+			[EI_OSABI] = ELFOSABI_SYSV,
+		},
+		.e_type = ET_DYN,
+		.e_machine = EM_X86_64,
+		.e_version = EV_CURRENT,
+		.e_ehsize = sizeof(Elf64_Ehdr),
+		.e_phentsize = sizeof(Elf64_Phdr),
+	};
+
+	ehdr.e_shstrndx = SHN_UNDEF;
+	ehdr.e_shoff = 0;
+	ehdr.e_shnum = 0;
+
+	ehdr.e_phoff = sizeof(ehdr);
+	ehdr.e_phnum = 2;
+
+	Elf64_Phdr phdrs[] = {
+		{
+			.p_type = PT_LOAD,
+			.p_flags = PF_X|PF_W|PF_R,
+			.p_align = 0x1000,
+		},
+		{
+			.p_type = PT_DYNAMIC,
+			.p_flags = PF_W|PF_R,
+			.p_align = 0x8,
+		},
+	};
+
+	size_t code =
+		sizeof(ehdr) +
+		sizeof(phdrs);
+
+	size_t code_end = code + sizeof(shellcode);
+
+	phdrs[1].p_vaddr = code_end;
+	phdrs[1].p_offset = code_end;
+	phdrs[1].p_paddr = code_end;
+
+	enum {
+		DYN_INIT,
+		DYN_STRTAB,
+		DYN_SYMTAB,
+		DYN_NULL,
+	};
+
+	Elf64_Dyn dyn[] = {
+		[DYN_INIT] = {
+			.d_tag = DT_INIT,
+		},
+		[DYN_STRTAB] = { // 4
+			.d_tag = DT_STRTAB,
+		},
+		[DYN_SYMTAB] = { // 5
+			.d_tag = DT_SYMTAB,
+		},
+		[DYN_NULL] = {
+			.d_tag = DT_NULL,
+		}
+	};
+	phdrs[1].p_filesz = sizeof(dyn);
+	phdrs[1].p_memsz = sizeof(dyn);
+
+	dyn[DYN_STRTAB].d_un.d_val = code_end + sizeof(dyn) - sizeof(*dyn);
+	dyn[DYN_SYMTAB].d_un.d_val = code_end + sizeof(dyn) - sizeof(*dyn);
+
+	dyn[0].d_un.d_val = code;
+	ehdr.e_entry = code;
+
+	phdrs[0].p_memsz = code_end + sizeof(dyn);
+	phdrs[0].p_filesz = code_end + sizeof(dyn);
+
+	write(1, &ehdr, sizeof(ehdr));
+	write(1, phdrs, sizeof(phdrs));
+	write(1, shellcode, sizeof(shellcode));
+	write(1, dyn, sizeof(dyn)
+		- sizeof(*dyn) /* we dont need DT_NULL in the file :) */
+		- 8 - 2 /* those are 0 bytes at the end for no reason :) */);
+}
+```
+
+As you can see, we did some small optimisations, like trimming the `'\0'` bytes
+at the end in the ELF.
+
+Once again, we test it:
+
+```
+$ make do_golf
+cc     do_golf.c   -o do_golf
+$ ./do_golf > ./libgolf.so
+$ stat -c "%s" libgolf.so
+237
+$ LD_PRELOAD=./libgolf.so /bin/true
+sh-5.0$
+```
+
+Uploading it to the server gives us this result:
+
+![](assets/img/2020-04-19_23:58:37.png)
+
+Yes! We have the first flag! But now it is time to get serious.
+
+# 136 bytes - back to binutils
+
+Let's recap what do we need:
+
+ - 1 `Ehdr`
+ - 2 `Phdr`: `PT_LOAD` and `PT_DYNAMIC`
+ - 4 `Dyn`: `DT_INIT`, `DT_STRTAB`, `DT_SYMTAB` and `DT_NULL`
+ - and our payload
+
+Now we're going to write our binary by hand, as we will have to twiddle our bits
+to the max. We're going to use our assembler and have lots of fun in
+hexadecimal.
+
+Each of them is allowed to overlap. The Dynamic section (and our payload, but
+we don't use this feature here) is read once loaded in memory, so we can truncate
+its `'\0'` bytes if it is at the end of the file. We can leverage this to win 31
+bytes because the last entry, `DT_NULL` is only 0, and both `ST_STRTAB` and
+`DT_SYMTAB` end with 15 bytes of `'\0'` (7 bytes because the tag is 5 or 6, and
+the value is ignored).
+
+Now we want to look how we can alias our Headers:
+
+`Ehdr`:
+
+ - The first 24 bytes can't be changed (`e_ident`, `e_type`, `e_machine` and
+   `e_version`)
+ - `e_phoff`, `e_phentsize` and `e_phnum` are required also
+ - the rest is ignored
+
+Both `Phdr` need their `p_type`.
+
+For the `PT_DYNAMIC` Program header:
+
+ - `p_vaddr` must hold the offset of our `Dyn` array in the file
+ - `p_filesz` must not be null
+
+For the `PT_LOAD` Program header:
+
+ - `p_flags` is required
+ - `p_offset` and `p_vaddr` must aligned on `p_align`
+ - `p_align` must be 0 or a power of 2
+
+And finally for our Dynamic section, only `DT_INIT` has a meaningful `d_val`.
+
+So my plan is to put the `Phdr` at offset 24, inside the `Ehdr`, and the Dynamic
+section inside the `Phdr`. Then we put the Dynamic section in the `PT_LOAD` `Phdr` and
+truncate its last `'\0'` bytes. One source file is worth a thousand word so here
+is the source file with the aliasing explained in the comments.
+
+```
+ehdr:
+.byte 0x7f, 0x45, 0x4c, 0x46 // ei_mag
+.byte 0x02 // EI_CLASS
+.byte 0x01 // EI_DATA
+.byte 0x01 // EI_VERSION
+.byte 0x00 // EI_OSABI
+.byte 0x00 // EI_ABIVERSION
+.byte 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 // EI_NIDENT
+.byte 0x03, 0x00 // e_type
+.byte 0x3e, 0x00 // e_machine
+.byte 0x01, 0x00 // e_version
+.byte 0x00, 0x00 // e_version
+phdr:
+phdr_dyn:
+.long 0x02 // p_type = PT_DYNAMIC // e_entry ignored
+.long 0x00 // p_offset = 0 // e_entry ignored
+
+.quad phdr - ehdr // p_vaddr = ignored // e_phoff = phdr
+
+.quad dyn - ehdr // p_vaddr = dyn // e_shoff = ignored
+
+next:
+// p_paddr = ignored // e_flags = ignored
+pop    %rsi
+syscall
+nop
+.byte 0x00, 0x00 // p_paddr = ignored // e_ehsize = ignored
+
+.byte 0x38, 0x00 // p_paddr = ignored // e_phentsize = 0x38
+.byte 0x02, 0x00  // p_filesz = ingored* // e_phnum = 2
+/*
+ * This code aliases over:
+ *  - e_shentsize, e_shnum, e_shstrndx
+ *  - p_memsz, p_flags, p_align
+ * and jumps back to next when we have no more space in the Phdr.
+ * We are glad to have so much contiguous space for the big movabs insn
+ */
+code:
+pushq  $0x3b
+pop    %rax
+movabs $0x68732f6e69622f,%rbx
+cltd
+push   %rbx
+push   %rsp
+pop    %rdi
+push   %rdx
+push   %rdi
+push   %rsp
+jmp next
+phdr_load:
+.long 0x01 // p_type = PT_LOAD
+.long 0x07 // p_flags = anything | 0x7
+dyn:
+dyn_strtab:
+.quad 0x05 // p_offset = ignored // d_tag = DT_STRTAB
+.quad 0x05 // p_vaddr = p_offset // d_val = ignored
+dyn_init:
+.quad 0x0c // p_paddr = ignored // d_tag = DT_INIT
+.quad code - ehdr // p_filesz = ignored // d_val = code
+dyn_symtab:
+.quad 0x06 // p_memsz = ignored // d_tag = DT_SYMTAB
+.quad 0x00 // p_align // d_val = ignored
+```
+
+Testing it:
+
+```
+$ make elf.o
+cc    -c -o elf.o elf.S
+$ objcopy -O binary elf.o elf.so
+$ stat -c "%s" elf_136.so
+136
+$ LD_PRELOAD=./elf_136.so ls
+sh-5.0$
+```
+
+And now on the site:
+
+![](assets/img/2020-04-19_23:16:33.png)
+
+:)
+
+# The end ?
+
+We went from a 15408 byte binary to a 136 byte one. That's over 100 times
+smaller.
+
+Is 136 bytes the smallest .so possible for this challenge ?
+
+While we need at least 2 `Phdr` and 1 `Ehdr` in the file (sadly we can't trim
+their trailing `\0`) so the minimum size would be `min(sizeof(Elf64_Ehdr), 2 *
+sizeof(Elf64_Phdr))`, which is 112 bytes.
+
+However, we have to alias `Phrd`s inside `Ehdr` so their fields are compatible.
+The issue is that the 24 first bytes of Ehdr can't be changed. It leaves us with
+a size of `24 + 2 * sizeof(Elf64_Phdr) = 136`.
+
+One can argue that we can move the `PT_LOAD` Phdr in first so we use
+`e_version` for `p_type` and so on, but while it makes a valid elf 4 byte smaller,
+it won't load because `e_phoff` aliases with `p_offset` of the `PT_LOAD` Phdr,
+thus ld.so fails on `mmap`. So this is where the record stands today.
