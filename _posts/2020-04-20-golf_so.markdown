@@ -40,8 +40,9 @@ driver (250 pts)
 
 # Foreword
 
-You can skip to section [136 bytes - back to binutils] if you want the solution;
-otherwise you will see the step by step progress leading to this solution.
+You can skip to section [136 bytes - back to
+binutils](#136-bytes---back-to-binutils) if you want the solution; otherwise
+you will see the step by step progress leading to this solution.
 
 I want to thank my teammates of team [LSE](https://lse.epita.fr), who helped me
 a lot for this challenge, and in particular
@@ -562,8 +563,7 @@ Each of them is allowed to overlap. The Dynamic section (and our payload, but
 we don't use this feature here) is read once loaded in memory, so we can truncate
 its `'\0'` bytes if it is at the end of the file. We can leverage this to win 31
 bytes because the last entry, `DT_NULL` is only 0, and both `ST_STRTAB` and
-`DT_SYMTAB` end with 15 bytes of `'\0'` (7 bytes because the tag is 5 or 6, and
-the value is ignored).
+`DT_SYMTAB` end with 15 bytes of `'\0'` (7 bytes because the tag is 5 or 6, and 8 because `d_val` is ignored).
 
 Now we want to look how we can alias our Headers:
 
@@ -665,9 +665,9 @@ Testing it:
 $ make elf.o
 cc    -c -o elf.o elf.S
 $ objcopy -O binary elf.o elf.so
-$ stat -c "%s" elf_136.so
+$ stat -c "%s" elf.so
 136
-$ LD_PRELOAD=./elf_136.so ls
+$ LD_PRELOAD=./elf.so ls
 sh-5.0$
 ```
 
