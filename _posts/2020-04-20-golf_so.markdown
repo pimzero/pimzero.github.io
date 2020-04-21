@@ -659,6 +659,9 @@ dyn_symtab:
 .quad 0x00 // p_align // d_val = ignored
 ```
 
+(And [here]({{ site.url }}/assets/golf.so.html) is an interactive visualisation
+of the binary)
+
 Testing it:
 
 ```
