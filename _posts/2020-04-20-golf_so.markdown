@@ -397,9 +397,9 @@ of the library to `l->l_info[DT_INIT]->d_un.d_ptr`, which has a relocation to
 point to the beginning of our code.
 
 In other words, `l->l_info[DT_INIT]->d_un.d_ptr = code_offset + l->l_addr`, so
-we jump to `2 * l->l_addr + code_offset`, which is bogus, instead of `l->l_addr
-+ code_offset`. Moving the relocation away of the `DT_INIT` makes our binary
-work.
+we jump to `2 * l->l_addr + code_offset`, which is bogus, instead of
+`l->l_addr + code_offset`. Moving the relocation away of the `DT_INIT` makes
+our binary work.
 
 This revelation changes lots of things: We don't need relocations, so we can
 drop most of our Dynamic entries. We can make a file under 300 bytes, as we now
