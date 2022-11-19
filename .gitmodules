@@ -1,0 +1,4 @@
+[submodule "whoami"]
+	path = whoami
+	url = https://github.com/pimzero/whoami.git
+	branch = main
