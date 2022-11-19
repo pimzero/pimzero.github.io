@@ -1,1 +1,1 @@
-socials/about.html.sig
+whoami/about.html.sig
